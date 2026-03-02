@@ -1,168 +1,149 @@
-import ROOT
-import pandas as pd
-import numpy as np
-import xgboost as xgb
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import sys
 import os
-
-# Use English for comments in the code.
-
-# --- 1. Configuration ---
-MODEL_PATH = "bs_tautau_xgb_model.bin"
-TREE_NAME = "tree"
-
-# List of input and output files
-# Format: (input_file, output_file)
-FILES_TO_PROCESS = [
-#    ("final_bstautau_vtx.root",  "applied_final_bstautau_vtx.root"),
-#    ("final_ttsemileptonic_vtx.root",  "applied_final_ttsemileptonic_vtx.root"),
-    ("sig_reco.root",  "applied_sig_reco.root"),
-
-    # Add more files as needed
-]
-
-FEATURES = [
-    "alpha1", "alpha2", "x1", "x2", "m_vis", "m_exact",
-    "pair_pt", "pair_eta", "n_extra_trks", "iso_ratio",
-    "tau1_vtxProb", "tau2_vtxProb", "tau1_lxySig", "tau2_lxySig",
-#    "j_ParTRawTauhtaue", "j_ParTRawTauhtaumu", 
-#    "j_ParTRawTauhtauh", "j_ParTRawSingletau",
-    "tau1_m_rho", "tau2_m_rho",
-    "tau1_deltaPV_dr", "tau2_deltaPV_dr",
-    "tau1_mass", "tau2_mass",
-    "tau1_pt", "tau2_pt",
-    "tau1_eta", "tau2_eta",
-    "j_deepflavB"
-]
+import argparse
+import warnings
 
 
-#FEATURES = [
-##    "alpha1", "alpha2", "x1", "x2", "m_vis", "m_exact",
-#    "pair_pt", "pair_eta", "n_extra_trks", "iso_ratio",
-#    "tau1_vtxProb", "tau2_vtxProb", "tau1_lxySig", "tau2_lxySig",
-##    "j_ParTRawTauhtaue", "j_ParTRawTauhtaumu", 
-##    "j_ParTRawTauhtauh", "j_ParTRawSingletau",
-#    "tau1_m_rho", "tau2_m_rho",
-#    "tau1_deltaPV_dr", "tau2_deltaPV_dr",
-#    "tau1_mass", "tau2_mass",
-#    "tau1_pt", "tau2_pt",
-#    "tau1_eta", "tau2_eta",
-#    "j_deepflavB"
-#]
+warnings.filterwarnings("ignore")
+import numpy as np
+
+# English comment: Hotfix for ROOT 6.26/NumPy 1.24+ compatibility.
+# We do this quietly to avoid the FutureWarning.
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    if not hasattr(np, 'object'):
+        np.object = object
 
 
+# English comment: Hotfix for ROOT 6.26/NumPy 1.24+ compatibility.
+if not hasattr(np, 'object'):
+    np.object = object
 
-# v3: full variables
-#FEATURES = [
-#    "alpha1", "alpha2", "x1", "x2", "m_vis", "m_exact",
-#    "pair_pt", "pair_eta", "n_extra_trks", "iso_ratio",
-#    "tau1_vtxProb", "tau2_vtxProb", "tau1_lxySig", "tau2_lxySig",
-#    "j_ParTRawTauhtaue", "j_ParTRawTauhtaumu", 
-#    "j_ParTRawTauhtauh", "j_ParTRawSingletau",
-#    "tau1_m_rho", "tau2_m_rho",
-##    "tau1_deltaPV_dx", "tau2_deltaPV_dx",
-##    "tau1_deltaPV_dy", "tau2_deltaPV_dy",
-##    "tau1_deltaPV_dz", "tau2_deltaPV_dz",
-#    "tau1_mass", "tau2_mass",
-#    "tau1_pt", "tau2_pt",
-#    "tau1_eta", "tau2_eta",
-#    "j_deepflavB"
-#]
+import pandas as pd
+import ROOT
+import xgboost as xgb
 
+# English comment: Suppress specific UserWarnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
-# v1
-#FEATURES = [
-#    "pair_pt", "pair_eta", "n_extra_trks", "iso_ratio",
-#    "tau1_vtxProb", "tau2_vtxProb", "tau1_lxySig", "tau2_lxySig",
-##    "j_ParTRawTauhtaue", "j_ParTRawTauhtaumu", 
-##    "j_ParTRawTauhtauh", "j_ParTRawSingletau",
-#    "tau1_m_rho", "tau2_m_rho",
-##    "tau1_deltaPV_dx", "tau2_deltaPV_dx",
-##    "tau1_deltaPV_dy", "tau2_deltaPV_dy",
-##    "tau1_deltaPV_dz", "tau2_deltaPV_dz",
-#    "tau1_mass", "tau2_mass",
-#    "tau1_pt", "tau2_pt",
-#    "tau1_eta", "tau2_eta",
-#    "j_deepflavB"
-#]
-#
-## v2: v1 + adding di-tau score
-#FEATURES = [
-#    "pair_pt", "pair_eta", "n_extra_trks", "iso_ratio",
-#    "tau1_vtxProb", "tau2_vtxProb", "tau1_lxySig", "tau2_lxySig",
-#    "j_ParTRawTauhtaue", "j_ParTRawTauhtaumu", 
-#    "j_ParTRawTauhtauh", "j_ParTRawSingletau",
-#    "tau1_m_rho", "tau2_m_rho",
-##    "tau1_deltaPV_dx", "tau2_deltaPV_dx",
-##    "tau1_deltaPV_dy", "tau2_deltaPV_dy",
-##    "tau1_deltaPV_dz", "tau2_deltaPV_dz",
-#    "tau1_mass", "tau2_mass",
-#    "tau1_pt", "tau2_pt",
-#    "tau1_eta", "tau2_eta",
-#    "j_deepflavB"
-#]
+# English comment: Import mode configurations
+try:
+    from features import FEATURES_DICT
+except ImportError:
+    print("Error: features.py not found.")
+    sys.exit(1)
 
+def apply_model(mode, input_file, model_path, output_file, tree_name="tree"):
+    """
+    Applies the trained XGBoost model to ALL events in the ROOT file.
+    No selection cuts are applied during this process.
+    """
+    if not os.path.exists(model_path):
+        print(f"Error: Model file {model_path} not found.")
+        return
 
+    # English comment: Load the trained XGBoost model
+    model = xgb.XGBClassifier()
+    model.load_model(model_path)
+    print(f">>> Model loaded: {model_path}")
 
+    features = FEATURES_DICT[mode]
 
+    # English comment: 1. Setup RDataFrame without any Filter
+    df_rdf = ROOT.RDataFrame(tree_name, input_file)
+    
+    # English comment: 2. Extract features for ALL events using AsNumpy
+    print(f">>> Extracting features for all events into memory...")
+    raw_data = df_rdf.AsNumpy(columns=features)
+    
+    # English comment: Ensure all columns are converted from RVec objects to flat NumPy arrays
+    processed_data = {}
+    for feat in features:
+        vals = raw_data[feat]
+        if len(vals) > 0 and hasattr(vals[0], '__getitem__') and not isinstance(vals[0], (str, bytes)):
+            processed_data[feat] = np.array([v[0] if len(v) > 0 else -999.0 for v in vals])
+        else:
+            processed_data[feat] = vals
 
+    df_inference = pd.DataFrame(processed_data)
+    
+    # English comment: Fill potential NaN values with -999 to prevent XGBoost inference errors
+    df_inference = df_inference.fillna(-999.0)
 
-def apply_mva():
-    # Load the trained model
-    print("Loading model: {}".format(MODEL_PATH))
-    bst = xgb.Booster()
-    bst.load_model(MODEL_PATH)
+    # English comment: 3. Run XGBoost Inference
+    print(f">>> Running inference on total {len(df_inference)} events...")
+    mva_scores = model.predict_proba(df_inference[features])[:, 1].astype(np.float32)
 
-    for in_file, out_file in FILES_TO_PROCESS:
-        if not os.path.exists(in_file):
-            print("Warning: {} not found. Skipping...".format(in_file))
-            continue
+    # English comment: 4. Inject MVA scores back into ROOT via C++ Helper with progress reporter
+    if not hasattr(ROOT, 'MVAHelper'):
+        ROOT.gInterpreter.ProcessLine('''
+            struct MVAHelper {
+                std::vector<float> scores;
+                size_t idx = 0;
+                size_t total = 0;
+                MVAHelper() = default;
 
-        print("Processing: {} -> {}".format(in_file, out_file))
-        
-        # Open original file and get tree
-        f_in = ROOT.TFile.Open(in_file)
-        
-        hist = f_in.Get("h_genEventSumw")
+                float get_score() { 
+                    if (idx < scores.size()) {
+                        if (idx % 10000 == 0 || idx == total - 1) {
+                            printf("    Processing: %3.1f%% (%zu/%zu)\\r", 
+                                   (float)idx/total*100.0, idx, total);
+                            fflush(stdout);
+                        }
+                        return scores[idx++];
+                    }
+                    return -999.0;
+                }
+                void clear(size_t n) { 
+                    idx = 0; 
+                    total = n; 
+                    scores.clear(); 
+                    scores.reserve(n); 
+                }
+            };
+        ''')
 
-        tree = f_in.Get(TREE_NAME)
-        
-        # 1. Convert Tree to Dataframe for fast inference
-        # In Python 2.7/PyROOT, we iterate and fill a dict
-        data_dict = {f: [] for f in FEATURES}
-        for event in tree:
-            for f in FEATURES:
-                data_dict[f].append(getattr(event, f))
-        
-        df = pd.DataFrame(data_dict)
-        
-        # 2. Inference
-        dmatrix = xgb.DMatrix(df[FEATURES])
-        scores = bst.predict(dmatrix) # This returns the probability [0, 1]
+    if not hasattr(ROOT, 'mva_helper'):
+        ROOT.gInterpreter.ProcessLine('MVAHelper mva_helper;')
 
-        # 3. Write to New ROOT File
-        f_out = ROOT.TFile(out_file, "RECREATE")
-        new_tree = tree.CloneTree(0) # Clone structure without entries
-        
-        # Create a buffer for the new branch
-        mva_score = np.array([0], dtype=np.float32)
-        new_tree.Branch("mva_score", mva_score, "mva_score/F")
-        
-        print("Writing scores to new tree...")
-        num_entries = tree.GetEntries()
-        for i in range(num_entries):
-            tree.GetEntry(i)
-            # Fill the buffer with the calculated score
-            mva_score[0] = scores[i]
-            new_tree.Fill()
-            
-            if i % 10000 == 0:
-                print("Progress: {}/{}".format(i, num_entries))
+    # English comment: Fill the C++ vector
+    ROOT.mva_helper.clear(len(mva_scores))
+    for s in mva_scores:
+        ROOT.mva_helper.scores.push_back(s)
 
-        new_tree.Write()
-        hist.Write()
+    # English comment: Define new branch for MVA score
+    df_final = df_rdf.Define(f"Bs{mode}_mva_score", "mva_helper.get_score()")
+    
+    print(f">>> Writing ALL events to {output_file} (Snapshot progress will appear below)...")
+    # English comment: Snapshot saves every single event from the original tree plus the new branch
+    df_final.Snapshot(tree_name, output_file)
+    print("") 
+
+    # English comment: 5. Copy h_genEventSumw from the original file to the new file
+    f_orig = ROOT.TFile.Open(input_file)
+    h_sumw = f_orig.Get("h_genEventSumw")
+    if h_sumw:
+        print(f">>> Copying h_genEventSumw to {output_file}...")
+        f_out = ROOT.TFile.Open(output_file, "UPDATE")
+        h_sumw.SetDirectory(f_out)
+        h_sumw.Write()
         f_out.Close()
-        f_in.Close()
-        print("Successfully created: {}".format(out_file))
+    f_orig.Close()
+
+    print(f">>> Application complete. Total processed: {len(mva_scores)}")
 
 if __name__ == "__main__":
-    apply_mva()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('mode', type=str)
+    parser.add_argument('--input', type=str, required=True)
+    parser.add_argument('--model', type=str, required=True)
+    parser.add_argument('--output', type=str, default='output_with_mva.root')
+    
+    args = parser.parse_args()
+    apply_model(args.mode, args.input, args.model, args.output)
+
+
+
